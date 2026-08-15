@@ -119,6 +119,53 @@ def screenshot(page, name: str):
         pass
 
 
+def robust_click(page, text: str, step_name: str = "click"):
+    """
+    Намагається клікнути елемент з даним текстом кількома способами,
+    бо на держ. сайтах часто клікабельний не сам текст, а чекбокс/label
+    навколо нього.
+    """
+    node = page.get_by_text(re.compile(re.escape(text), re.I)).first
+    node.scroll_into_view_if_needed(timeout=10000)
+
+    # 1. Прямий клік по тексту
+    try:
+        node.click(timeout=5000)
+        return True
+    except Exception:
+        pass
+
+    # 2. Клік по найближчому предку label/li/div/tr (частий випадок для чекбоксів)
+    for tag in ["label", "li", "tr", "div"]:
+        try:
+            ancestor = node.locator(f"xpath=ancestor::{tag}[1]")
+            if ancestor.count() > 0:
+                ancestor.first.click(timeout=5000)
+                return True
+        except Exception:
+            continue
+
+    # 3. Пошук пов'язаного checkbox/radio input поруч і клік по ньому
+    try:
+        container = node.locator("xpath=ancestor::*[self::div or self::li or self::tr][1]")
+        input_el = container.locator("input[type=checkbox], input[type=radio]")
+        if input_el.count() > 0:
+            input_el.first.click(timeout=5000, force=True)
+            return True
+    except Exception:
+        pass
+
+    # 4. Форсований клік напряму по тексту (ігнорує перевірку видимості)
+    try:
+        node.click(timeout=5000, force=True)
+        return True
+    except Exception:
+        pass
+
+    screenshot(page, f"FAILED_{step_name}")
+    return False
+
+
 def navigate_to_suggestions(page):
     """Проходить кроки 1-3 і опиняється на сторінці 'Terminvorschläge'."""
 
@@ -127,15 +174,15 @@ def navigate_to_suggestions(page):
     screenshot(page, "step0_start")
 
     # Крок 1: вибір установи/локації
-    loc = page.get_by_text(re.compile(re.escape(CONFIG["LOCATION_TEXT"]), re.I))
-    loc.first.click(timeout=15000)
+    if not robust_click(page, CONFIG["LOCATION_TEXT"], "step1_location"):
+        raise RuntimeError(f"Не вдалося клікнути локацію '{CONFIG['LOCATION_TEXT']}'")
     screenshot(page, "step1_location")
     click_weiter(page)
     page.wait_for_timeout(1500)
 
     # Крок 2: вибір причини звернення (Anliegen)
-    concern_label = page.get_by_text(re.compile(re.escape(CONFIG["CONCERN_TEXT"]), re.I))
-    concern_label.first.click(timeout=15000)
+    if not robust_click(page, CONFIG["CONCERN_TEXT"], "step2_concern"):
+        raise RuntimeError(f"Не вдалося клікнути причину звернення '{CONFIG['CONCERN_TEXT']}'")
     screenshot(page, "step2_concern")
     click_weiter(page)
     page.wait_for_timeout(1500)
