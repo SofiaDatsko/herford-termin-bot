@@ -56,9 +56,22 @@ CONFIG = {
         "TELEGRAM_CHAT_ID", "PASTE_YOUR_CHAT_ID_HERE"
     ),  # локально: запустіть get_chat_id.py і впишіть сюди
 
-    # Як часто перевіряти (секунди). Не ставте занадто часто, щоб не заблокували.
+    # Як часто перевіряти при ЛОКАЛЬНОМУ безкінечному запуску (python herford_termin_bot.py --forever)
     "POLL_INTERVAL_SECONDS": 240,       # ~4 хвилини
     "POLL_JITTER_SECONDS": 60,          # + випадково 0-60 сек, щоб не бути "роботом"
+
+    # Налаштування для запуску В GITHUB ACTIONS (за замовчуванням, без флагів):
+    # один запуск job'а триває CI_LOOP_DURATION_SECONDS і всередині робить
+    # перевірку кожні CI_CHECK_INTERVAL_SECONDS - це дає ефект "перевірка
+    # ~щохвилини", хоча сам GitHub Actions запускає job лише раз на 5 хв.
+    "CI_LOOP_DURATION_SECONDS": 270,    # 4.5 хв - завершується до наступного запуску cron (кожні 5 хв)
+    "CI_CHECK_INTERVAL_SECONDS": 60,    # цільовий інтервал між перевірками всередині job'а
+
+    # Раз на скільки хвилин доби відправляти "ще нічого" (heartbeat).
+    # Через те що кожен запуск GitHub Actions - окремий, без пам'яті про
+    # попередні - heartbeat шлється лише в тому запуску, який припадає на
+    # перші HEARTBEAT_WINDOW_MINUTES хвилин години (напр. 10:00-10:04).
+    "HEARTBEAT_WINDOW_MINUTES": 5,
 
     # Скільки разів повторити спробу кроку, перш ніж здатися
     "STEP_RETRIES": 3,
@@ -293,6 +306,19 @@ def check_dates_for_slots(page) -> list[str]:
 
 # ============================== ОСНОВНИЙ ЦИКЛ ==============================
 
+def maybe_send_heartbeat(already_sent: bool) -> bool:
+    """Раз на годину (у вікні перших HEARTBEAT_WINDOW_MINUTES хвилин) шле
+    коротке 'ще нічого'. already_sent - щоб не слати двічі в межах одного
+    запуску скрипта (CI-цикл робить кілька перевірок за один запуск)."""
+    if already_sent:
+        return True
+    now = datetime.now()
+    if now.minute < CONFIG["HEARTBEAT_WINDOW_MINUTES"]:
+        send_telegram(f"🤖 Бот живий. Станом на {now:%H:%M} вільних годин на 20.08.2026 / 27.08.2026 ще немає.")
+        return True
+    return False
+
+
 def run_once(headed: bool) -> bool:
     """Одна перевірка. Повертає True, якщо знайдено вільні слоти."""
     with sync_playwright() as p:
@@ -319,9 +345,35 @@ def run_once(headed: bool) -> bool:
             browser.close()
 
 
+def run_ci_loop(headed: bool):
+    """Режим для GitHub Actions: робить кілька перевірок протягом
+    CI_LOOP_DURATION_SECONDS (~4.5 хв), з інтервалом ~CI_CHECK_INTERVAL_SECONDS,
+    і завершується сам, щоб не перетнутися з наступним запуском cron."""
+    start = time.monotonic()
+    heartbeat_sent = False
+    check_num = 0
+    while time.monotonic() - start < CONFIG["CI_LOOP_DURATION_SECONDS"]:
+        check_num += 1
+        cycle_start = time.monotonic()
+        found = run_once(headed=headed)
+        heartbeat_sent = maybe_send_heartbeat(heartbeat_sent)
+        if found:
+            break
+        elapsed_in_cycle = time.monotonic() - cycle_start
+        remaining_budget = CONFIG["CI_LOOP_DURATION_SECONDS"] - (time.monotonic() - start)
+        sleep_for = min(
+            max(CONFIG["CI_CHECK_INTERVAL_SECONDS"] - elapsed_in_cycle, 0),
+            max(remaining_budget, 0),
+        )
+        if sleep_for > 1:
+            time.sleep(sleep_for)
+    print(f"CI-цикл завершено, зроблено перевірок: {check_num}")
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--once", action="store_true", help="Виконати лише одну перевірку і завершити")
+    parser.add_argument("--once", action="store_true", help="Виконати лише одну перевірку і завершити (для тесту)")
+    parser.add_argument("--forever", action="store_true", help="Безкінечний цикл для локального запуску (не для GitHub Actions)")
     parser.add_argument("--headed", action="store_true", help="Показувати вікно браузера (для налагодження)")
     args = parser.parse_args()
 
@@ -329,15 +381,17 @@ def main():
         run_once(headed=args.headed)
         return
 
-    print("Бот запущено. Перевірка кожні ~"
-          f"{CONFIG['POLL_INTERVAL_SECONDS']}-{CONFIG['POLL_INTERVAL_SECONDS']+CONFIG['POLL_JITTER_SECONDS']} сек. Ctrl+C для зупинки.")
-    while True:
-        found = run_once(headed=args.headed)
-        if found:
-            print("Слоти знайдено і повідомлення надіслано. Продовжуємо моніторинг "
-                  "(бронюйте вручну, бот автоматично не бронює).")
-        delay = CONFIG["POLL_INTERVAL_SECONDS"] + random.randint(0, CONFIG["POLL_JITTER_SECONDS"])
-        time.sleep(delay)
+    if args.forever:
+        print("Бот запущено (локальний безкінечний режим). Перевірка кожні ~"
+              f"{CONFIG['POLL_INTERVAL_SECONDS']}-{CONFIG['POLL_INTERVAL_SECONDS']+CONFIG['POLL_JITTER_SECONDS']} сек. Ctrl+C для зупинки.")
+        while True:
+            run_once(headed=args.headed)
+            delay = CONFIG["POLL_INTERVAL_SECONDS"] + random.randint(0, CONFIG["POLL_JITTER_SECONDS"])
+            time.sleep(delay)
+
+    # За замовчуванням (без флагів) - режим для GitHub Actions:
+    # обмежений у часі цикл з частими перевірками.
+    run_ci_loop(headed=args.headed)
 
 
 if __name__ == "__main__":
