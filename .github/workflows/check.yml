@@ -2,14 +2,13 @@ name: Herford Termin Check
 
 on:
   schedule:
-    # Мінімальний інтервал GitHub Actions - 5 хвилин. Сам скрипт всередині
-    # кожного запуску робить кілька перевірок кожну ~хвилину протягом ~4.5 хв,
-    # тож ефективно перевірка відбувається набагато частіше за 5 хв.
-    - cron: "*/5 * * * *"
+    # Це лише "запасний" тригер на випадок, якщо зовнішній cron (cron-job.org)
+    # раптом не спрацює. Основний точний ритм задає зовнішній сервіс, який
+    # викликає workflow_dispatch через GitHub API - див. README.md.
+    - cron: "*/20 * * * *"
   workflow_dispatch:
 
-# Не даємо новому запуску стартувати, поки попередній ще не завершився
-# (про всяк випадок, якщо перевірка раптом затягнеться довше 5 хв).
+# Не даємо новому запуску стартувати, поки попередній ще не завершився.
 concurrency:
   group: herford-termin-check
   cancel-in-progress: false
@@ -17,7 +16,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 4
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -49,11 +48,11 @@ jobs:
         if: steps.pw-cache.outputs.cache-hit == 'true'
         run: playwright install-deps chromium
 
-      - name: Run check loop (~4.5 min, checks roughly every minute)
+      - name: Run check
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python herford_termin_bot.py
+        run: python herford_termin_bot.py --once
 
       - name: Upload debug screenshots on failure
         if: failure()
