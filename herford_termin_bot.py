@@ -169,6 +169,22 @@ def robust_click(page, text: str, step_name: str = "click"):
     return False
 
 
+def find_stepper_plus_button(row_text_locator):
+    """Шукає кнопку '+' степпера, перевіряючи кілька рівнів батьківських
+    елементів угору (розмітка рядків з Anliegen може бути вкладена по-різному)."""
+    for level in range(1, 7):
+        container = row_text_locator.locator(f"xpath=ancestor::*[{level}]")
+        try:
+            if container.count() == 0:
+                continue
+            btns = container.locator("button")
+            if btns.count() > 0:
+                return btns.last
+        except Exception:
+            continue
+    return None
+
+
 def navigate_to_suggestions(page):
     """Проходить кроки 1-3 і опиняється на сторінці 'Terminvorschläge'."""
 
@@ -198,9 +214,22 @@ def navigate_to_suggestions(page):
         re.compile(rf"^{re.escape(CONFIG['CONCERN_TEXT'])}", re.I)
     ).first
     concern_row.scroll_into_view_if_needed(timeout=10000)
-    row_container = concern_row.locator("xpath=ancestor::*[self::div or self::tr][1]")
-    plus_button = row_container.locator("button").last
-    plus_button.click(timeout=10000)
+
+    plus_button = find_stepper_plus_button(concern_row)
+    if plus_button is not None:
+        plus_button.click(timeout=10000, force=True)
+    else:
+        # Резервний варіант: якщо кнопку "+" не знайдено, спробуємо
+        # напряму вписати "1" у поле кількості поруч.
+        row_container = concern_row.locator("xpath=ancestor::*[3]")
+        number_input = row_container.locator("input")
+        if number_input.count() > 0:
+            number_input.last.fill("1")
+        else:
+            screenshot(page, "FAILED_no_plus_button")
+            raise RuntimeError(
+                "Не вдалося знайти кнопку '+' або поле кількості для Anliegen"
+            )
     screenshot(page, "step2_concern")
     click_weiter(page)
     page.wait_for_timeout(1500)
