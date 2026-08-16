@@ -41,6 +41,9 @@ CONFIG = {
     # Текст Anliegen (причини звернення), яку треба обрати
     "CONCERN_TEXT": "Ersterfassung Ukraineflüchtlinge",
 
+    # Назва категорії-акордеону, в якій лежить CONCERN_TEXT (треба розкрити спершу)
+    "CONCERN_CATEGORY_TEXT": "Ukraineflüchtlinge",
+
     # Дати, на які чекаємо вільні години (формат як на сайті: DD.MM.YYYY)
     "TARGET_DATES": ["20.08.2026", "27.08.2026"],
 
@@ -181,9 +184,34 @@ def navigate_to_suggestions(page):
     page.wait_for_timeout(1500)
 
     # Крок 2: вибір причини звернення (Anliegen)
-    if not robust_click(page, CONFIG["CONCERN_TEXT"], "step2_concern"):
-        raise RuntimeError(f"Не вдалося клікнути причину звернення '{CONFIG['CONCERN_TEXT']}'")
+    # На цьому сайті категорії згорнуті в акордеон - спершу відкриваємо
+    # категорію, потім тиснемо кнопку "+" біля потрібного Anliegen
+    # (сам текст не клікабельний, кількість регулюється степпером -/+).
+    if not robust_click(page, CONFIG["CONCERN_CATEGORY_TEXT"], "step2_category"):
+        raise RuntimeError(
+            f"Не вдалося розкрити категорію '{CONFIG['CONCERN_CATEGORY_TEXT']}'"
+        )
+    page.wait_for_timeout(500)
+    screenshot(page, "step2_category_expanded")
+
+    concern_row = page.get_by_text(
+        re.compile(rf"^{re.escape(CONFIG['CONCERN_TEXT'])}", re.I)
+    ).first
+    concern_row.scroll_into_view_if_needed(timeout=10000)
+    row_container = concern_row.locator("xpath=ancestor::*[self::div or self::tr][1]")
+    plus_button = row_container.locator("button").last
+    plus_button.click(timeout=10000)
     screenshot(page, "step2_concern")
+    click_weiter(page)
+    page.wait_for_timeout(1500)
+
+    # Крок 3: вибір локації (у цього Anliegen зазвичай лише один варіант,
+    # тому просто тиснемо Weiter; якщо є картка локації для вибору - клікаємо її).
+    try:
+        robust_click(page, "Servicestelle Internationales der Hansestadt Herford", "step3_standort")
+        page.wait_for_timeout(500)
+    except Exception:
+        pass
     click_weiter(page)
     page.wait_for_timeout(1500)
 
