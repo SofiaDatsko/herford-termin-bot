@@ -64,7 +64,7 @@ CONFIG = {
     # один запуск job'а триває CI_LOOP_DURATION_SECONDS і всередині робить
     # перевірку кожні CI_CHECK_INTERVAL_SECONDS - це дає ефект "перевірка
     # ~щохвилини", хоча сам GitHub Actions запускає job лише раз на 5 хв.
-    "CI_LOOP_DURATION_SECONDS": 270,    # 4.5 хв - завершується до наступного запуску cron (кожні 5 хв)
+    "CI_LOOP_DURATION_SECONDS": 180,    # 3 хв - залишає запас до наступного запуску cron (кожні 5 хв)
     "CI_CHECK_INTERVAL_SECONDS": 60,    # цільовий інтервал між перевірками всередині job'а
 
     # Раз на скільки хвилин доби відправляти "ще нічого" (heartbeat).
