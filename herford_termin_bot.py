@@ -54,7 +54,7 @@ CONFIG = {
     "CONCERN_CATEGORY_TEXT": "Ukraineflüchtlinge",
 
     # Дати, на які чекаємо вільні години (формат як на сайті: DD.MM.YYYY)
-    "TARGET_DATES": ["20.08.2026", "27.08.2026"],
+    "TARGET_DATES": ["15.10.2026", "22.10.2026"],
 
     # Telegram — беремо зі змінних середовища (GitHub Actions secrets), якщо
     # вони є; інакше використовуємо значення нижче (для локального запуску).
@@ -284,7 +284,7 @@ def check_dates_for_slots(page) -> list[str]:
     found_dates = []
 
     for target_date in CONFIG["TARGET_DATES"]:
-        # Заголовок дати, напр. "Donnerstag, 20.08.2026"
+        # Заголовок дати, напр. "Donnerstag, 15.10.2026"
         date_header = page.get_by_text(re.compile(re.escape(target_date)))
         if date_header.count() == 0:
             continue  # ця дата взагалі не показана на сторінці (поза діапазоном)
@@ -317,7 +317,8 @@ def maybe_send_heartbeat(already_sent: bool) -> bool:
         return True
     now = now_kyiv()
     if now.minute < CONFIG["HEARTBEAT_WINDOW_MINUTES"]:
-        send_telegram(f"🤖 Бот живий. Станом на {now:%H:%M} вільних годин на 20.08.2026 / 27.08.2026 ще немає.")
+        dates_text = " / ".join(CONFIG["TARGET_DATES"])
+        send_telegram(f"🤖 Бот живий. Станом на {now:%H:%M} вільних годин на {dates_text} ще немає.")
         return True
     return False
 
