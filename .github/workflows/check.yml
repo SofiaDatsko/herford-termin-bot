@@ -2,21 +2,24 @@ name: Herford Termin Check
 
 on:
   schedule:
-    # Це лише "запасний" тригер на випадок, якщо зовнішній cron (cron-job.org)
-    # раптом не спрацює. Основний точний ритм задає зовнішній сервіс, який
-    # викликає workflow_dispatch через GitHub API - див. README.md.
+    # Запасний тригер (раз на 20 хв) на випадок, якщо зовнішній cron
+    # (cron-job.org) раптом не спрацює. Основний ритм (щохвилини) задає
+    # cron-job.org через workflow_dispatch - див. README.md.
     - cron: "*/20 * * * *"
+    # Щогодинний запуск, який додатково шле в Telegram статус бота
+    # ("живий, слотів немає" або "перевірка не вдалася: ...").
+    - cron: "10 * * * *"
   workflow_dispatch:
-
-# Не даємо новому запуску стартувати, поки попередній ще не завершився.
-concurrency:
-  group: herford-termin-check
-  cancel-in-progress: false
+    inputs:
+      notify:
+        description: "Надіслати статус у Telegram (для ручного тесту)"
+        type: boolean
+        default: false
 
 jobs:
   check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 4
+    timeout-minutes: 6
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -52,6 +55,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SEND_STATUS: ${{ github.event.schedule == '10 * * * *' || inputs.notify == true }}
         run: python herford_termin_bot.py --once
 
       - name: Upload debug screenshots on failure
