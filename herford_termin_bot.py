@@ -69,12 +69,6 @@ CONFIG = {
     "POLL_INTERVAL_SECONDS": 240,       # ~4 хвилини
     "POLL_JITTER_SECONDS": 60,          # + випадково 0-60 сек, щоб не бути "роботом"
 
-    # Раз на годину відправляти "ще нічого" (heartbeat). Спрацьовує лише в
-    # тому запуску, час якого потрапляє в перші HEARTBEAT_WINDOW_MINUTES
-    # хвилин години (напр. 10:00-10:01). Має бути МЕНШЕ за інтервал зовнішніх
-    # запусків (рекомендовано 3 хв), інакше heartbeat надішлеться кілька разів
-    # поспіль в межах однієї години.
-    "HEARTBEAT_WINDOW_MINUTES": 2,
 
     # Скільки разів повторити спробу кроку, перш ніж здатися
     "STEP_RETRIES": 3,
@@ -309,22 +303,25 @@ def check_dates_for_slots(page) -> list[str]:
 
 # ============================== ОСНОВНИЙ ЦИКЛ ==============================
 
-def maybe_send_heartbeat(already_sent: bool) -> bool:
-    """Раз на годину (у вікні перших HEARTBEAT_WINDOW_MINUTES хвилин) шле
-    коротке 'ще нічого'. already_sent - щоб не слати двічі в межах одного
-    запуску скрипта (CI-цикл робить кілька перевірок за один запуск)."""
-    if already_sent:
-        return True
+def send_status(found: list, error):
+    """Коротке повідомлення про стан перевірки (для щогодинного heartbeat
+    і для ручного запуску з галочкою 'notify'). Якщо знайдено слоти - окреме
+    повідомлення вже надіслане в run_once, тому тут нічого не шлемо."""
+    if found and not error:
+        return
     now = now_kyiv()
-    if now.minute < CONFIG["HEARTBEAT_WINDOW_MINUTES"]:
+    if error:
+        send_telegram(f"⚠️ {now:%H:%M} Перевірка не вдалася: {error[:300]}")
+    else:
         dates_text = " / ".join(CONFIG["TARGET_DATES"])
-        send_telegram(f"🤖 Бот живий. Станом на {now:%H:%M} вільних годин на {dates_text} ще немає.")
-        return True
-    return False
+        send_telegram(
+            f"🤖 Бот живий. {now:%H:%M}: перевірка пройшла успішно, "
+            f"вільних годин на {dates_text} ще немає."
+        )
 
 
-def run_once(headed: bool) -> bool:
-    """Одна перевірка. Повертає True, якщо знайдено вільні слоти."""
+def run_once(headed: bool):
+    """Одна перевірка. Повертає (список дат зі слотами, текст помилки або None)."""
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=not headed)
         page = browser.new_page()
@@ -339,21 +336,24 @@ def run_once(headed: bool) -> bool:
                     "Бронюйте швидше: " + CONFIG["START_URL"]
                 )
                 send_telegram(msg)
-                return True
-            return False
+            return found, None
         except Exception as e:
             print("[!] Помилка під час перевірки:", e)
             screenshot(page, "error")
-            return False
+            text = str(e).strip()
+            first_line = text.splitlines()[0] if text else type(e).__name__
+            return [], first_line
         finally:
             browser.close()
 
 
 def run_ci_check(headed: bool):
-    """Одна перевірка + перевірка heartbeat. Викликається як --once,
-    так і без флагів - зовнішній сервіс (cron-job.org) задає ритм запусків."""
-    found = run_once(headed=headed)
-    maybe_send_heartbeat(already_sent=False)
+    """Одна перевірка. Якщо змінна середовища SEND_STATUS=true (її виставляє
+    workflow для щогодинного запуску та для ручного запуску з галочкою) -
+    додатково шле в Telegram статус перевірки (успіх або помилка)."""
+    found, error = run_once(headed=headed)
+    if os.environ.get("SEND_STATUS") == "true":
+        send_status(found, error)
     return found
 
 
