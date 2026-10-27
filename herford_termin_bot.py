@@ -54,7 +54,7 @@ CONFIG = {
     "CONCERN_CATEGORY_TEXT": "Ukraineflüchtlinge",
 
     # Дати, на які чекаємо вільні години (формат як на сайті: DD.MM.YYYY)
-    "TARGET_DATES": ["15.10.2026", "22.10.2026"],
+    "TARGET_DATES": ["29.10.2026", "05.11.2026"],
 
     # Telegram — беремо зі змінних середовища (GitHub Actions secrets), якщо
     # вони є; інакше використовуємо значення нижче (для локального запуску).
@@ -66,9 +66,8 @@ CONFIG = {
     ),  # локально: запустіть get_chat_id.py і впишіть сюди
 
     # Як часто перевіряти при ЛОКАЛЬНОМУ безкінечному запуску (python herford_termin_bot.py --forever)
-    "POLL_INTERVAL_SECONDS": 240,       # ~4 хвилини
-    "POLL_JITTER_SECONDS": 60,          # + випадково 0-60 сек, щоб не бути "роботом"
-
+    "POLL_INTERVAL_SECONDS": 240,        # ~4 хвилини
+    "POLL_JITTER_SECONDS": 60,           # + випадково 0-60 сек, щоб не бути "роботом"
 
     # Скільки разів повторити спробу кроку, перш ніж здатися
     "STEP_RETRIES": 3,
@@ -210,9 +209,6 @@ def navigate_to_suggestions(page):
     page.wait_for_timeout(1500)
 
     # Крок 2: вибір причини звернення (Anliegen)
-    # На цьому сайті категорії згорнуті в акордеон - спершу відкриваємо
-    # категорію, потім тиснемо кнопку "+" біля потрібного Anliegen
-    # (сам текст не клікабельний, кількість регулюється степпером -/+).
     if not robust_click(page, CONFIG["CONCERN_CATEGORY_TEXT"], "step2_category"):
         raise RuntimeError(
             f"Не вдалося розкрити категорію '{CONFIG['CONCERN_CATEGORY_TEXT']}'"
@@ -229,8 +225,6 @@ def navigate_to_suggestions(page):
     if plus_button is not None:
         plus_button.click(timeout=10000, force=True)
     else:
-        # Резервний варіант: якщо кнопку "+" не знайдено, спробуємо
-        # напряму вписати "1" у поле кількості поруч.
         row_container = concern_row.locator("xpath=ancestor::*[3]")
         number_input = row_container.locator("input")
         if number_input.count() > 0:
@@ -244,8 +238,7 @@ def navigate_to_suggestions(page):
     click_weiter(page)
     page.wait_for_timeout(1500)
 
-    # Крок 3: вибір локації (у цього Anliegen зазвичай лише один варіант,
-    # тому просто тиснемо Weiter; якщо є картка локації для вибору - клікаємо її).
+    # Крок 3: вибір локації
     try:
         robust_click(page, "Servicestelle Internationales der Hansestadt Herford", "step3_standort")
         page.wait_for_timeout(500)
@@ -254,8 +247,6 @@ def navigate_to_suggestions(page):
     click_weiter(page)
     page.wait_for_timeout(1500)
 
-    # Можливий проміжний крок (напр. згода/Datenschutz) - просто тиснемо Weiter,
-    # якщо він є, доки не зʼявиться заголовок "Terminvorschläge".
     for _ in range(3):
         if page.get_by_text(re.compile("Terminvorschläge", re.I)).count() > 0:
             break
@@ -273,17 +264,14 @@ def navigate_to_suggestions(page):
 
 
 def check_dates_for_slots(page) -> list[str]:
-    """Повертає список цільових дат, для яких на сторінці є доступні (не 'вимкнені') слоти."""
-
+    """Повертає список цільових дат, для яких на сторінці є доступні слоти."""
     found_dates = []
 
     for target_date in CONFIG["TARGET_DATES"]:
-        # Заголовок дати, напр. "Donnerstag, 15.10.2026"
         date_header = page.get_by_text(re.compile(re.escape(target_date)))
         if date_header.count() == 0:
-            continue  # ця дата взагалі не показана на сторінці (поза діапазоном)
+            continue
 
-        # Знаходимо контейнер дати і дивимось чи є в ньому активна (не 'disabled') кнопка часу.
         try:
             container = date_header.first.locator(
                 "xpath=ancestor::*[self::div or self::section][1]"
@@ -294,8 +282,6 @@ def check_dates_for_slots(page) -> list[str]:
             if enabled_buttons.count() > 0:
                 found_dates.append(target_date)
         except Exception:
-            # якщо не вдалось розпарсити структуру - вважаємо що дата згадана => повідомляємо,
-            # краще хибне спрацювання ніж пропущений вільний час
             found_dates.append(target_date)
 
     return found_dates
@@ -304,9 +290,6 @@ def check_dates_for_slots(page) -> list[str]:
 # ============================== ОСНОВНИЙ ЦИКЛ ==============================
 
 def send_status(found: list, error):
-    """Коротке повідомлення про стан перевірки (для щогодинного heartbeat
-    і для ручного запуску з галочкою 'notify'). Якщо знайдено слоти - окреме
-    повідомлення вже надіслане в run_once, тому тут нічого не шлемо."""
     if found and not error:
         return
     now = now_kyiv()
@@ -321,7 +304,6 @@ def send_status(found: list, error):
 
 
 def run_once(headed: bool):
-    """Одна перевірка. Повертає (список дат зі слотами, текст помилки або None)."""
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=not headed)
         page = browser.new_page()
@@ -348,9 +330,6 @@ def run_once(headed: bool):
 
 
 def run_ci_check(headed: bool):
-    """Одна перевірка. Якщо змінна середовища SEND_STATUS=true (її виставляє
-    workflow для щогодинного запуску та для ручного запуску з галочкою) -
-    додатково шле в Telegram статус перевірки (успіх або помилка)."""
     found, error = run_once(headed=headed)
     if os.environ.get("SEND_STATUS") == "true":
         send_status(found, error)
@@ -360,8 +339,8 @@ def run_ci_check(headed: bool):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true", help="Виконати лише одну перевірку і завершити (для тесту)")
-    parser.add_argument("--forever", action="store_true", help="Безкінечний цикл для локального запуску (не для GitHub Actions)")
-    parser.add_argument("--headed", action="store_true", help="Показувати вікно браузера (для налагодження)")
+    parser.add_argument("--forever", action="store_true", help="Безкінечний цикл для локального запуску")
+    parser.add_argument("--headed", action="store_true", help="Показувати вікно браузера")
     args = parser.parse_args()
 
     if args.forever:
@@ -373,8 +352,6 @@ def main():
             time.sleep(delay)
         return
 
-    # І --once, і запуск без флагів роблять одну перевірку + heartbeat.
-    # Зовнішній сервіс (cron-job.org) сам задає точний ритм викликів.
     run_ci_check(headed=args.headed)
 
 
